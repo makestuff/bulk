@@ -1,5 +1,5 @@
 #!/bin/bash
-export LIB=ucm
+export LIB=bulk
 export DATE=$(date +%Y%m%d)
 rm -rf ${LIB}-${DATE}
 mkdir ${LIB}-${DATE}
@@ -32,9 +32,9 @@ cp -rp win32/dbg/*.exe ${LIB}-${DATE}/win32/dbg/
 
 cp -p LICENSE.txt ${LIB}-${DATE}/
 cat > ${LIB}-${DATE}/README <<EOF
-UCM Binary Distribution
+Bulk Binary Distribution
 
-UCM is a small utility for communicating with the control endpoint of a LibUSB device.
+A small program to send binary data to one of the bulk endpoints of a LibUSB device.
 EOF
 
 # Package it up
