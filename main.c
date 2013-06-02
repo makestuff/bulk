@@ -14,41 +14,44 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-#include <libusbwrap.h>
-#include <usb.h>
-#include <argtable2.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <liberror.h>
-//#include "dump.h"
+#include <libusbwrap.h>
+#include <argtable2.h>
 #ifdef WIN32
 #include <Windows.h>
 #else
 #include <sys/time.h>
 #endif
 
-#define VID 0x1443
-#define PID 0x0005
+#define CHECK(condition, retCode) \
+	if ( condition ) { \
+		FAIL(retCode); \
+	}
 
 int main(int argc, char *argv[]) {
-
-	struct arg_str *vpOpt  = arg_str1("v", "vidpid", "<VID:PID>", " vendor ID and product ID (e.g 04B4:8613)");
-	struct arg_int  *epOpt   = arg_int0("e", "endpoint", "<N>", "     endpoint to write to");
+	struct arg_str *vpOpt    = arg_str1("v", "vidpid", "<VID:PID>", " vendor ID and product ID (e.g 04B4:8613)");
+	struct arg_uint *toOpt = arg_uint0("t", "timeout", "<millis>", " timeout in milliseconds");
+	struct arg_int  *epOpt   = arg_int0("e", "endpoint", "<epNum>", " endpoint to write to");
 	struct arg_lit  *benOpt  = arg_lit0("b", "benchmark", "        benchmark the operation");
 	struct arg_lit  *chkOpt  = arg_lit0("c", "checksum", "         print 16-bit checksum");
 	struct arg_lit  *helpOpt = arg_lit0("h", "help", "             print this help and exit\n");
 	struct arg_file *fileOpt = arg_file1(NULL, NULL, "<fileName>", "             the data to send");
 	struct arg_end  *endOpt  = arg_end(20);
-	void* argTable[] = {vpOpt, epOpt, benOpt, chkOpt, helpOpt, fileOpt, endOpt};
+	void* argTable[] = {vpOpt, toOpt, epOpt, benOpt, chkOpt, helpOpt, fileOpt, endOpt};
 	const char *progName = "bulk";
 	int numErrors;
 	int epNum = 0x06;
 	FILE *inFile = NULL;
 	uint8 *buffer = NULL;
 	uint32 fileLen;
-	struct usb_dev_handle *deviceHandle = NULL;
-	int returnCode = 0;
-	const char *error;
+	struct USBDevice *deviceHandle = NULL;
+	int uStatus, returnCode = 0;
+	const char *error = NULL;
 	double totalTime, speed;
-	unsigned short checksum = 0x0000;
+	uint16 checksum = 0x0000;
+	uint32 timeout = 5000;
 	uint32 i;
 	#ifdef WIN32
 		LARGE_INTEGER tvStart, tvEnd, freq;
@@ -79,6 +82,10 @@ int main(int argc, char *argv[]) {
 		arg_print_errors(stdout, endOpt, progName);
 		printf("Try '%s --help' for more information.\n", progName);
 		FAIL(2);
+	}
+
+	if ( toOpt->count ) {
+		timeout = toOpt->ival[0];
 	}
 
 	inFile = fopen(fileOpt->filename[0], "rb");
@@ -113,33 +120,26 @@ int main(int argc, char *argv[]) {
 		epNum = epOpt->ival[0];
 	}
 
-	usbInitialise();
-	returnCode = usbOpenDeviceVP(vpOpt->sval[0], 1, 0, 0, &deviceHandle, &error);
-	if ( returnCode ) {
-		fprintf(stderr, "usbOpenDevice() failed: %s\n", error);
-		errFree(error);
-		FAIL(6);
-	}
-	usb_clear_halt(deviceHandle, epNum);
+	uStatus = usbInitialise(0, &error);
+	CHECK(uStatus, 6);
+
+	uStatus = usbOpenDevice(vpOpt->sval[0], 1, 0, 0, &deviceHandle, &error);
+	CHECK(uStatus, 7);
+
 	#ifdef WIN32
 		QueryPerformanceCounter(&tvStart);
-		returnCode = usb_bulk_write(deviceHandle, USB_ENDPOINT_OUT | epNum, (char*)buffer, fileLen, 5000);
+		uStatus = usbBulkWrite(deviceHandle, epNum, buffer, fileLen, timeout, &error);
 		QueryPerformanceCounter(&tvEnd);
-	#else
-		gettimeofday(&tvStart, NULL);
-		returnCode = usb_bulk_write(deviceHandle, USB_ENDPOINT_OUT | epNum, (char*)buffer, fileLen, 5000);
-		gettimeofday(&tvEnd, NULL);
-	#endif
-	if ( returnCode != (int)fileLen ) {
-		printf("Expected to write %lu bytes but actually wrote %d: %s\n", fileLen, returnCode, usb_strerror());
-		FAIL(7);
-	}
-	#ifdef WIN32
+		CHECK(uStatus, 8);
 		totalTime = (double)(tvEnd.QuadPart - tvStart.QuadPart);
 		totalTime /= freq.QuadPart;
 		printf("Time: %fms\n", totalTime/1000.0);
 		speed = (double)fileLen / (1024*1024*totalTime);
 	#else
+		gettimeofday(&tvStart, NULL);
+		uStatus = usbBulkWrite(deviceHandle, epNum, buffer, fileLen, timeout, &error);
+		gettimeofday(&tvEnd, NULL);
+		CHECK(uStatus, 8);
 		startTime = tvStart.tv_sec;
 		startTime *= 1000000;
 		startTime += tvStart.tv_usec;
@@ -162,8 +162,11 @@ cleanup:
 		fclose(inFile);
 	}
 	if ( deviceHandle ) {
-		usb_release_interface(deviceHandle, 0);
-		usb_close(deviceHandle);
+		usbCloseDevice(deviceHandle, 0);
+	}
+	if ( error ) {
+		fprintf(stderr, "%s\n", error);
+		usbFreeError(error);
 	}
 	arg_freetable(argTable, sizeof(argTable)/sizeof(argTable[0]));
 
