@@ -90,7 +90,7 @@ int main(int argc, char *argv[]) {
 
 	inFile = fopen(fileOpt->filename[0], "rb");
 	if ( !inFile ) {
-		fprintf(stderr, "Unable to open file %s", fileOpt->filename[0]);
+		fprintf(stderr, "Unable to open file %s\n", fileOpt->filename[0]);
 		FAIL(3);
 	}
 
