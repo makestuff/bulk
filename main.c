@@ -25,11 +25,6 @@
 #include <sys/time.h>
 #endif
 
-#define CHECK(condition, retCode) \
-	if ( condition ) { \
-		FAIL(retCode); \
-	}
-
 int main(int argc, char *argv[]) {
 	struct arg_str *vpOpt    = arg_str1("v", "vidpid", "<VID:PID>", " vendor ID and product ID (e.g 04B4:8613)");
 	struct arg_uint *toOpt = arg_uint0("t", "timeout", "<millis>", " timeout in milliseconds");
@@ -42,12 +37,13 @@ int main(int argc, char *argv[]) {
 	void* argTable[] = {vpOpt, toOpt, epOpt, benOpt, chkOpt, helpOpt, fileOpt, endOpt};
 	const char *progName = "bulk";
 	int numErrors;
-	int epNum = 0x06;
+	uint8 epNum = 0x06;
 	FILE *inFile = NULL;
 	uint8 *buffer = NULL;
 	uint32 fileLen;
 	struct USBDevice *deviceHandle = NULL;
-	int uStatus, returnCode = 0;
+	USBStatus uStatus;
+	int retVal = 0;
 	const char *error = NULL;
 	double totalTime, speed;
 	uint16 checksum = 0x0000;
@@ -65,23 +61,22 @@ int main(int argc, char *argv[]) {
 
 	if ( arg_nullcheck(argTable) != 0 ) {
 		printf("%s: insufficient memory\n", progName);
-		FAIL(1);
+		FAIL(1, cleanup);
 	}
 
 	numErrors = arg_parse(argc, argv, argTable);
-
 	if ( helpOpt->count > 0 ) {
 		printf("Bulk Write Tool Copyright (C) 2009-2011 Chris McClelland\n\nUsage: %s", progName);
 		arg_print_syntax(stdout, argTable, "\n");
 		printf("\nWrite data to a bulk endpoint.\n\n");
 		arg_print_glossary(stdout, argTable,"  %-10s %s\n");
-		FAIL(0);
+		FAIL(0, cleanup);
 	}
 
 	if ( numErrors > 0 ) {
 		arg_print_errors(stdout, endOpt, progName);
 		printf("Try '%s --help' for more information.\n", progName);
-		FAIL(2);
+		FAIL(2, cleanup);
 	}
 
 	if ( toOpt->count ) {
@@ -91,46 +86,45 @@ int main(int argc, char *argv[]) {
 	inFile = fopen(fileOpt->filename[0], "rb");
 	if ( !inFile ) {
 		fprintf(stderr, "Unable to open file %s\n", fileOpt->filename[0]);
-		FAIL(3);
+		FAIL(3, cleanup);
 	}
 
 	fseek(inFile, 0, SEEK_END);
-	fileLen = ftell(inFile);
+	fileLen = (uint32)ftell(inFile);
 	fseek(inFile, 0, SEEK_SET);
 
 	buffer = (uint8 *)malloc(fileLen);
 	if ( !buffer ) {
 		fprintf(stderr, "Unable to allocate memory for file %s\n", fileOpt->filename[0]);
-		FAIL(4);
+		FAIL(4, cleanup);
 	}
 
 	if ( fread(buffer, 1, fileLen, inFile) != fileLen ) {
 		fprintf(stderr, "Unable to read file %s\n", fileOpt->filename[0]);
-		FAIL(5);
+		FAIL(5, cleanup);
 	}
 
 	if ( chkOpt->count ) {
 		for ( i = 0; i < fileLen; i++  ) {
-			checksum += buffer[i];
+			checksum = (uint16)(checksum + buffer[i]);
 		}
 		printf("Checksum: 0x%04X\n", checksum);
 	}
 
 	if ( epOpt->count ) {
-		epNum = epOpt->ival[0];
+		epNum = (uint8)epOpt->ival[0];
 	}
 
 	uStatus = usbInitialise(0, &error);
-	CHECK(uStatus, 6);
-
+	CHECK_STATUS(uStatus, 6, cleanup);
 	uStatus = usbOpenDevice(vpOpt->sval[0], 1, 0, 0, &deviceHandle, &error);
-	CHECK(uStatus, 7);
+	CHECK_STATUS(uStatus, 7, cleanup);
 
 	#ifdef WIN32
 		QueryPerformanceCounter(&tvStart);
 		uStatus = usbBulkWrite(deviceHandle, epNum, buffer, fileLen, timeout, &error);
 		QueryPerformanceCounter(&tvEnd);
-		CHECK(uStatus, 8);
+		CHECK_STATUS(uStatus, 8, cleanup);
 		totalTime = (double)(tvEnd.QuadPart - tvStart.QuadPart);
 		totalTime /= freq.QuadPart;
 		printf("Time: %fms\n", totalTime/1000.0);
@@ -139,14 +133,14 @@ int main(int argc, char *argv[]) {
 		gettimeofday(&tvStart, NULL);
 		uStatus = usbBulkWrite(deviceHandle, epNum, buffer, fileLen, timeout, &error);
 		gettimeofday(&tvEnd, NULL);
-		CHECK(uStatus, 8);
+		CHECK_STATUS(uStatus, 8, cleanup);
 		startTime = tvStart.tv_sec;
 		startTime *= 1000000;
 		startTime += tvStart.tv_usec;
 		endTime = tvEnd.tv_sec;
 		endTime *= 1000000;
 		endTime += tvEnd.tv_usec;
-		totalTime = endTime - startTime;
+		totalTime = (double)(endTime - startTime);
 		totalTime /= 1000000;  // convert from uS to S.
 		speed = (double)fileLen / (1024*1024*totalTime);
 	#endif
@@ -169,6 +163,5 @@ cleanup:
 		usbFreeError(error);
 	}
 	arg_freetable(argTable, sizeof(argTable)/sizeof(argTable[0]));
-
-	return returnCode;
+	return retVal;
 }
